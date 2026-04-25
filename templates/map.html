@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EcoStress Index — Map</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body class="map-page">
+
+  <!-- Top bar -->
+  <header class="topbar">
+    <span class="logo">EcoStress Index</span>
+    <div class="search-wrap">
+      <input type="text" id="city-search" placeholder="Search city (e.g. Tucson, AZ)" />
+      <button id="search-btn">Search</button>
+    </div>
+    <button id="logout-btn">Sign Out</button>
+  </header>
+
+  <!-- Map -->
+  <div id="map"></div>
+
+  <!-- Side panel -->
+  <aside id="side-panel" class="hidden">
+    <button id="close-panel">&times;</button>
+    <h2 id="panel-name"></h2>
+
+    <div class="esi-gauge">
+      <label>ESI Score</label>
+      <div class="gauge-bar">
+        <div id="gauge-fill"></div>
+      </div>
+      <span id="panel-esi" class="esi-value"></span>
+    </div>
+
+    <div class="price-block">
+      <label>Dynamic Price</label>
+      <span id="panel-price" class="price-value"></span>
+    </div>
+
+    <div class="components-block">
+      <h3>Component Breakdown</h3>
+      <div class="component-row">
+        <span>Air Quality</span>
+        <div class="comp-bar"><div id="bar-aq"></div></div>
+        <span id="val-aq"></span>
+      </div>
+      <div class="component-row">
+        <span>Light Pollution</span>
+        <div class="comp-bar"><div id="bar-lp"></div></div>
+        <span id="val-lp"></span>
+      </div>
+      <div class="component-row">
+        <span>Heat Island</span>
+        <div class="comp-bar"><div id="bar-hi"></div></div>
+        <span id="val-hi"></span>
+      </div>
+      <div class="component-row">
+        <span>Energy Use</span>
+        <div class="comp-bar"><div id="bar-eu"></div></div>
+        <span id="val-eu"></span>
+      </div>
+    </div>
+
+    <div class="explanation-block">
+      <h3>AI Analysis</h3>
+      <p id="panel-explanation" class="loading-text">Loading...</p>
+    </div>
+
+    <div id="simulation-panel">
+      <h3>Projected Impact After Pricing</h3>
+      <p>Current avg use: <span id="baseline">--</span> kWh/mo</p>
+      <p>Projected after pricing: <span id="projected">--</span> kWh/mo</p>
+      <p>Estimated reduction: <span id="reduction">--</span>%</p>
+      <p class="ai-note" id="sim-insight"></p>
+    </div>
+  </aside>
+
+  <!-- Weights panel -->
+  <div id="weights-panel" class="hidden">
+    <h3>AI Weights for <span id="weights-city"></span></h3>
+    <p id="weights-reasoning" class="reasoning-text"></p>
+    <div id="weights-bars"></div>
+  </div>
+
+  <!-- Loading overlay -->
+  <div id="loading" class="hidden">
+    <div class="spinner"></div>
+    <p>Loading neighborhoods...</p>
+  </div>
+
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="/static/search.js"></script>
+  <script src="/static/map.js"></script>
+</body>
+</html>

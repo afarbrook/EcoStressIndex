@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EcoStress Index — Login</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</head>
+<body class="auth-page">
+  <div class="auth-card">
+    <h1>EcoStress Index</h1>
+    <p class="tagline">Environmental burden scoring for smarter energy pricing</p>
+
+    <div id="auth-error" class="error-msg hidden"></div>
+
+    <form id="auth-form">
+      <input type="email" id="email" placeholder="Email" required autocomplete="email" />
+      <input type="password" id="password" placeholder="Password" required autocomplete="current-password" />
+      <button type="submit" id="login-btn">Sign In</button>
+    </form>
+
+    <p class="toggle-text">
+      Don't have an account?
+      <a href="#" id="toggle-link">Sign Up</a>
+    </p>
+  </div>
+
+  <script>
+    const SUPABASE_URL = "{{ supabase_url or '' }}";
+    const SUPABASE_KEY = "{{ supabase_key or '' }}";
+
+    // Read from meta tags injected by Flask if env vars are available
+    const supabase = window.supabase.createClient(
+      document.querySelector('meta[name="supabase-url"]')?.content || SUPABASE_URL,
+      document.querySelector('meta[name="supabase-anon-key"]')?.content || SUPABASE_KEY
+    );
+
+    let isSignUp = false;
+
+    document.getElementById("toggle-link").addEventListener("click", (e) => {
+      e.preventDefault();
+      isSignUp = !isSignUp;
+      document.getElementById("login-btn").textContent = isSignUp ? "Create Account" : "Sign In";
+      document.getElementById("toggle-link").textContent = isSignUp ? "Sign In" : "Sign Up";
+      document.querySelector(".toggle-text").firstChild.textContent = isSignUp
+        ? "Already have an account? "
+        : "Don't have an account? ";
+    });
+
+    document.getElementById("auth-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const email = document.getElementById("email").value;
+      const password = document.getElementById("password").value;
+      const btn = document.getElementById("login-btn");
+      const errEl = document.getElementById("auth-error");
+
+      btn.disabled = true;
+      btn.textContent = "Loading...";
+      errEl.classList.add("hidden");
+
+      let result;
+      if (isSignUp) {
+        result = await supabase.auth.signUp({ email, password });
+      } else {
+        result = await supabase.auth.signInWithPassword({ email, password });
+      }
+
+      const { data, error } = result;
+
+      if (error) {
+        errEl.textContent = error.message;
+        errEl.classList.remove("hidden");
+        btn.disabled = false;
+        btn.textContent = isSignUp ? "Create Account" : "Sign In";
+        return;
+      }
+
+      if (data.session) {
+        localStorage.setItem("esi_token", data.session.access_token);
+        window.location.href = "/map";
+      } else if (isSignUp) {
+        errEl.textContent = "Check your email to confirm your account.";
+        errEl.classList.remove("hidden");
+        btn.disabled = false;
+        btn.textContent = "Create Account";
+      }
+    });
+  </script>
+</body>
+</html>
