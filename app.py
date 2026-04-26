@@ -3,7 +3,6 @@ from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
 from supabase import create_client
 from dotenv import load_dotenv
-import threading
 import os
 
 from esi import compute_esi, compute_price, normalize
@@ -70,7 +69,6 @@ def api_city():
     weights, gemini_reasoning = weights_f.result()
 
     neighborhoods, city_center = _get_neighborhoods(city, weights, base_rate)
-    _prefetch_explanations_bg(city, neighborhoods)
 
     return jsonify({
         "city": city,
@@ -142,27 +140,6 @@ def api_search_log():
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
-
-def _prefetch_explanations_bg(city: str, neighborhoods: list) -> None:
-    """Fire-and-forget: generate Gemini explanations for all neighborhoods in background threads."""
-    def _run():
-        def _fetch(n):
-            key = f"{city}|{n['name'].lower()}"
-            if key in _explanation_cache:
-                return
-            try:
-                _explanation_cache[key] = get_explanation(
-                    city, n["name"], n["esi_score"], n["components"]
-                )
-            except Exception:
-                pass
-
-        with ThreadPoolExecutor(max_workers=5) as ex:
-            for n in neighborhoods:
-                ex.submit(_fetch, n)
-
-    threading.Thread(target=_run, daemon=True).start()
-
 
 def _get_weights(city: str) -> tuple[dict, str]:
     """Return (weights_dict, reasoning) for a city, cached in-process after first call."""
