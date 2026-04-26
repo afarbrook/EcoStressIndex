@@ -15,4 +15,14 @@ document.addEventListener("DOMContentLoaded", () => {
       if (query) searchCity(query);
     }
   });
+
+  // Re-search with new rate when the base rate input changes
+  let rateTimer;
+  document.getElementById("base-rate").addEventListener("change", () => {
+    clearTimeout(rateTimer);
+    rateTimer = setTimeout(() => {
+      const query = input.value.trim();
+      if (query) searchCity(query);
+    }, 400);
+  });
 });

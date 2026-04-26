@@ -161,6 +161,7 @@ function clearLayers() {
   neighborhoodLayers.forEach((l) => map.removeLayer(l));
   neighborhoodLayers = [];
   selectedLayer = null;
+  currentNeighborhood = null;
 }
 
 function openSidePanel(neighborhood) {
