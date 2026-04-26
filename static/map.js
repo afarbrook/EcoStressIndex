@@ -1,8 +1,13 @@
 let map;
 let neighborhoodLayers = [];
+let layerByName = {};
+let neighborhoodDataByName = {};
 let currentNeighborhood = null;
 let selectedLayer = null;
 const explanationCache = {};
+let simData = {};
+let simDataLoaded = false;
+let currentMapMode = 'esi';
 
 const token = localStorage.getItem("esi_token");
 if (!token) window.location.href = "/";
@@ -27,6 +32,8 @@ document.addEventListener("DOMContentLoaded", () => {
     localStorage.removeItem("esi_token");
     window.location.href = "/";
   });
+
+  document.getElementById("map-mode-btn").addEventListener("click", toggleMapMode);
 
   document.getElementById("close-panel").addEventListener("click", () => {
     document.getElementById("side-panel").classList.add("hidden");
@@ -91,6 +98,7 @@ function renderNeighborhoods(neighborhoods) {
         })
         .addTo(map);
       neighborhoodLayers.push(layer);
+      layerByName[n.name] = layer;
     } else {
       const marker = L.circleMarker(getNeighborhoodLatLng(n.name), {
         radius: 18,
@@ -107,7 +115,9 @@ function renderNeighborhoods(neighborhoods) {
         })
         .addTo(map);
       neighborhoodLayers.push(marker);
+      layerByName[n.name] = marker;
     }
+    neighborhoodDataByName[n.name] = n;
   });
 
   // Fit map to show all rendered neighborhoods
@@ -160,8 +170,15 @@ function selectLayer(layer) {
 function clearLayers() {
   neighborhoodLayers.forEach((l) => map.removeLayer(l));
   neighborhoodLayers = [];
+  layerByName = {};
+  neighborhoodDataByName = {};
+  simData = {};
+  simDataLoaded = false;
   selectedLayer = null;
   currentNeighborhood = null;
+  currentMapMode = 'esi';
+  const btn = document.getElementById("map-mode-btn");
+  if (btn) { btn.textContent = "Impact View"; btn.classList.remove("active"); btn.disabled = false; }
 }
 
 function openSidePanel(neighborhood) {
@@ -188,9 +205,17 @@ function openSidePanel(neighborhood) {
   document.getElementById("panel-explanation").textContent =
     explanationCache[cacheKey] || "Loading...";
 
+  // Reset simulation display
+  ["sim-baseline", "sim-projected", "sim-reduction", "sim-co2", "sim-confidence"].forEach(
+    id => { document.getElementById(id).textContent = "--"; }
+  );
+  document.getElementById("sim-insight").textContent = "Loading...";
+  document.getElementById("sim-reduction-fill").style.width = "0%";
+
   panel.classList.remove("hidden");
 
   loadNeighborhoodDetail(neighborhood);
+  loadSimulation(neighborhood);
 }
 
 function setComponentBar(id, value) {
@@ -269,4 +294,98 @@ async function logSearch(query, city) {
 
 function showLoading(visible) {
   document.getElementById("loading").classList.toggle("hidden", !visible);
+}
+
+// ── Simulation ──────────────────────────────────────────────────────────────
+
+async function loadSimulation(neighborhood) {
+  if (simData[neighborhood.name]) {
+    displaySimulation(simData[neighborhood.name]);
+    return;
+  }
+  const cityQuery = document.getElementById("city-search").value || "Tucson, AZ";
+  try {
+    const res = await fetch(
+      `/api/simulate?city=${encodeURIComponent(cityQuery)}&neighborhood=${encodeURIComponent(neighborhood.name)}&base_rate=${getBaseRate()}`,
+      { headers: { Authorization: `Bearer ${getToken()}` } }
+    );
+    const data = await res.json();
+    if (!data.error) {
+      simData[neighborhood.name] = data;
+      displaySimulation(data);
+    }
+  } catch {
+    document.getElementById("sim-insight").textContent = "Could not load simulation.";
+  }
+}
+
+function displaySimulation(sim) {
+  document.getElementById("sim-baseline").textContent = sim.baseline_kwh;
+  document.getElementById("sim-projected").textContent = sim.projected_kwh;
+  document.getElementById("sim-reduction").textContent = sim.reduction_pct;
+  document.getElementById("sim-co2").textContent = sim.co2_saved_lbs ?? "--";
+  document.getElementById("sim-insight").textContent = sim.gemini_insight || "";
+  document.getElementById("sim-confidence").textContent =
+    sim.confidence != null ? `${(sim.confidence * 100).toFixed(0)}%` : "--";
+  const fill = document.getElementById("sim-reduction-fill");
+  fill.style.width = `${Math.min(100, sim.reduction_pct / 40 * 100).toFixed(0)}%`;
+}
+
+// ── Impact map layer ─────────────────────────────────────────────────────────
+
+function reductionToColor(pct) {
+  // gray-blue (0% reduction) → sky blue (35%+ reduction)
+  const t = Math.min(1, pct / 35);
+  const r = Math.round(136 - 80 * t);
+  const g = Math.round(136 + 53 * t);
+  const b = Math.round(136 + 112 * t);
+  return `rgb(${r}, ${g}, ${b})`;
+}
+
+function recolorLayers() {
+  Object.entries(layerByName).forEach(([name, layer]) => {
+    const n = neighborhoodDataByName[name];
+    if (!n) return;
+    const color = currentMapMode === 'esi'
+      ? esiToColor(n.esi_score)
+      : reductionToColor((simData[name]?.reduction_pct) ?? 0);
+    if (layer.setStyle) layer.setStyle({ fillColor: color, fillOpacity: 0.7, color: "#333", weight: 1 });
+  });
+}
+
+async function loadCitySimData(cityQuery) {
+  const res = await fetch(
+    `/api/simulate-city?name=${encodeURIComponent(cityQuery)}&base_rate=${getBaseRate()}`,
+    { headers: { Authorization: `Bearer ${getToken()}` } }
+  );
+  const data = await res.json();
+  (data.simulations || []).forEach(s => { simData[s.neighborhood] = s; });
+  simDataLoaded = true;
+}
+
+async function toggleMapMode() {
+  const btn = document.getElementById("map-mode-btn");
+  if (currentMapMode === 'esi') {
+    if (!simDataLoaded) {
+      btn.textContent = "Loading...";
+      btn.disabled = true;
+      try {
+        const cityQuery = document.getElementById("city-search").value || "Tucson, AZ";
+        await loadCitySimData(cityQuery);
+      } catch {
+        btn.textContent = "Impact View";
+        btn.disabled = false;
+        return;
+      }
+      btn.disabled = false;
+    }
+    currentMapMode = 'impact';
+    btn.textContent = "ESI View";
+    btn.classList.add("active");
+  } else {
+    currentMapMode = 'esi';
+    btn.textContent = "Impact View";
+    btn.classList.remove("active");
+  }
+  recolorLayers();
 }

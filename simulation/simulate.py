@@ -1,46 +1,37 @@
-# simulation/simulate.py
-# Owned by Person B
-# Stub implementation — Person B replaces this with the real model.
-
-import random
+ELASTICITY = 0.30  # absolute value; standard short-run US residential price elasticity
+CO2_LBS_PER_KWH = 0.93  # US average grid emission factor
 
 
-def run_simulation(city: str, neighborhood: str) -> dict:
+def run_simulation(neighborhood: str, esi_score: float, dynamic_price: float, base_rate: float = 0.12) -> dict:
     """
-    Given a city and neighborhood, return projected energy consumption change
-    after dynamic pricing is applied.
-
-    Person B: replace the stub logic below with your real elasticity model + Gemini insight.
-    Write results to the `simulations` Supabase table.
-
-    Returns the JSON shape that Alex's frontend expects:
-    {
-        "neighborhood": str,
-        "baseline_kwh": float,
-        "projected_kwh": float,
-        "reduction_pct": float,
-        "price_applied": float,
-        "confidence": float,
-        "gemini_insight": str,
-    }
+    Deterministic price-elasticity simulation.
+    Higher ESI neighborhoods have higher baseline use.
+    Reduction is proportional to price premium via standard elasticity.
     """
-    # --- STUB: replace with real model ---
-    baseline = round(random.uniform(900, 1400), 1)
-    reduction = round(random.uniform(10, 30), 1)
-    projected = round(baseline * (1 - reduction / 100), 1)
-    price = round(random.uniform(0.12, 0.18), 4)
-    confidence = round(random.uniform(0.70, 0.92), 2)
+    baseline_kwh = round(750 + esi_score * 700, 1)
+
+    price_increase_pct = ((dynamic_price - base_rate) / base_rate * 100) if base_rate > 0 else 0
+    reduction_pct = round(min(40.0, max(0.0, ELASTICITY * price_increase_pct)), 1)
+    projected_kwh = round(baseline_kwh * (1 - reduction_pct / 100), 1)
+    co2_saved_lbs = round((baseline_kwh - projected_kwh) * CO2_LBS_PER_KWH, 1)
+
+    # Confidence scales with how large the price signal is
+    confidence = round(min(0.95, 0.65 + abs(price_increase_pct) * 0.008), 2)
+
+    insight = (
+        f"A {price_increase_pct:.0f}% price premium (${dynamic_price}/kWh) is projected to reduce "
+        f"{neighborhood}'s average monthly consumption by {reduction_pct}%, "
+        f"from {baseline_kwh:.0f} to {projected_kwh:.0f} kWh — "
+        f"saving roughly {int(co2_saved_lbs)} lbs of CO₂ per household per month."
+    )
 
     return {
         "neighborhood": neighborhood,
-        "baseline_kwh": baseline,
-        "projected_kwh": projected,
-        "reduction_pct": reduction,
-        "price_applied": price,
+        "baseline_kwh": baseline_kwh,
+        "projected_kwh": projected_kwh,
+        "reduction_pct": reduction_pct,
+        "price_applied": dynamic_price,
+        "co2_saved_lbs": co2_saved_lbs,
         "confidence": confidence,
-        "gemini_insight": (
-            f"A dynamic pricing premium of ${price}/kWh is projected to reduce "
-            f"{neighborhood}'s average monthly consumption by {reduction}%, "
-            f"from {baseline} kWh to {projected} kWh."
-        ),
+        "gemini_insight": insight,
     }

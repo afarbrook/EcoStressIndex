@@ -22,6 +22,7 @@
       <input type="number" id="base-rate" value="0.12" min="0.01" max="5.00" step="0.01" />
       <span class="rate-suffix">/kWh</span>
     </div>
+    <button id="map-mode-btn">Impact View</button>
     <button id="logout-btn">Sign Out</button>
   </header>
 
@@ -73,6 +74,18 @@
     <div class="explanation-block">
       <h3>AI Analysis</h3>
       <p id="panel-explanation" class="loading-text">Loading...</p>
+    </div>
+
+    <div class="simulation-block">
+      <h3>Projected Impact After Pricing</h3>
+      <div id="simulation-panel">
+        <p>Baseline use: <span id="sim-baseline">--</span> kWh/mo</p>
+        <p>After pricing: <span id="sim-projected">--</span> kWh/mo</p>
+        <div class="sim-reduction-bar"><div id="sim-reduction-fill" class="sim-reduction-fill"></div></div>
+        <p>Reduction: <span id="sim-reduction">--</span>% &nbsp;·&nbsp; CO₂ saved: <span id="sim-co2">--</span> lbs/mo</p>
+        <p class="ai-note" id="sim-insight">Loading...</p>
+        <p style="font-size:0.78rem;color:#7a8a9a;margin-top:4px;">Model confidence: <span id="sim-confidence">--</span></p>
+      </div>
     </div>
 
   </aside>

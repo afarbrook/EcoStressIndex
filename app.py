@@ -12,6 +12,7 @@ from gemini_explain import get_explanation
 from geo import get_city_tracts, get_city_bbox, tract_components
 from mock_data import get_mock_for_city
 from data_sources import get_air_quality, get_light_pollution, get_heat_island, get_energy_use
+from simulation.simulate import run_simulation
 
 load_dotenv()
 
@@ -137,6 +138,46 @@ def api_neighborhood():
     result = dict(match)
     result["gemini_explanation"] = _explanation_cache[cache_key]
     return jsonify(result)
+
+
+@app.route("/api/simulate")
+@require_auth
+def api_simulate():
+    """Return simulation results for a single neighborhood."""
+    city = request.args.get("city", "Tucson, AZ")
+    neighborhood = request.args.get("neighborhood", "")
+    try:
+        base_rate = max(0.01, min(5.0, float(request.args.get("base_rate", 0.12))))
+    except ValueError:
+        base_rate = 0.12
+
+    weights, _ = _get_weights(city)
+    neighborhoods, _ = _get_neighborhoods(city, weights, base_rate)
+    match = next((n for n in neighborhoods if n["name"].lower() == neighborhood.lower()), None)
+    if not match:
+        return jsonify({"error": "Neighborhood not found"}), 404
+
+    return jsonify(run_simulation(match["name"], match["esi_score"], match["dynamic_price_per_kwh"], base_rate))
+
+
+@app.route("/api/simulate-city")
+@require_auth
+def api_simulate_city():
+    """Return simulation results for all neighborhoods in a city (used by map impact layer)."""
+    city = request.args.get("name", "Tucson, AZ")
+    try:
+        base_rate = max(0.01, min(5.0, float(request.args.get("base_rate", 0.12))))
+    except ValueError:
+        base_rate = 0.12
+
+    weights, _ = _get_weights(city)
+    neighborhoods, _ = _get_neighborhoods(city, weights, base_rate)
+
+    simulations = [
+        run_simulation(n["name"], n["esi_score"], n["dynamic_price_per_kwh"], base_rate)
+        for n in neighborhoods
+    ]
+    return jsonify({"city": city, "simulations": simulations})
 
 
 @app.route("/api/search-log", methods=["POST"])

@@ -223,11 +223,31 @@ body {
 .explanation-block p { font-size: 0.875rem; line-height: 1.6; color: #c0c0c0; }
 .loading-text { color: #7a8a9a; font-style: italic; }
 
-/* Simulation panel */
+/* Map mode toggle button */
+#map-mode-btn {
+  padding: 8px 14px;
+  background: #1e3a5a;
+  color: #60bfff;
+  font-weight: 600;
+  border: 1px solid #2e5a8a;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  white-space: nowrap;
+  transition: background 0.2s;
+}
+#map-mode-btn:hover { background: #2e4a6a; }
+#map-mode-btn.active { background: #1e4a6a; border-color: #60bfff; }
+#map-mode-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+
+/* Simulation block in side panel */
+.simulation-block { border-top: 1px solid #2e3a4a; padding-top: 4px; }
 #simulation-panel { font-size: 0.875rem; line-height: 1.7; }
 #simulation-panel p { margin-bottom: 4px; }
-#simulation-panel span { font-weight: 600; color: #4ade80; }
+#simulation-panel span { font-weight: 600; color: #38bdf8; }
 .ai-note { color: #7a8a9a; font-style: italic; margin-top: 8px; }
+.sim-reduction-bar { height: 8px; background: #2e3a4a; border-radius: 4px; overflow: hidden; margin: 6px 0; }
+.sim-reduction-fill { height: 100%; background: #38bdf8; border-radius: 4px; transition: width 0.5s ease; }
 
 /* ===== Weights Panel ===== */
 #weights-panel {
