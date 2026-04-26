@@ -1,4 +1,4 @@
-import google.generativeai as genai
+from google import genai
 import os
 
 
@@ -6,8 +6,7 @@ def get_explanation(city: str, neighborhood: str, esi_score: float, components: 
     """
     Generate a natural-language explanation of why a neighborhood received its ESI score.
     """
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
     prompt = f"""
     You are an environmental analyst. Explain in 2-3 sentences why the {neighborhood}
@@ -23,5 +22,5 @@ def get_explanation(city: str, neighborhood: str, esi_score: float, components: 
     Be specific about this city and neighborhood. Write for a non-technical audience.
     """
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(model="gemma-4-31b-it", contents=prompt)
     return response.text.strip()

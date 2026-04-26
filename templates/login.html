@@ -30,11 +30,7 @@
     const SUPABASE_URL = "{{ supabase_url or '' }}";
     const SUPABASE_KEY = "{{ supabase_key or '' }}";
 
-    // Read from meta tags injected by Flask if env vars are available
-    const supabase = window.supabase.createClient(
-      document.querySelector('meta[name="supabase-url"]')?.content || SUPABASE_URL,
-      document.querySelector('meta[name="supabase-anon-key"]')?.content || SUPABASE_KEY
-    );
+    const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
     let isSignUp = false;
 
@@ -61,9 +57,9 @@
 
       let result;
       if (isSignUp) {
-        result = await supabase.auth.signUp({ email, password });
+        result = await sb.auth.signUp({ email, password });
       } else {
-        result = await supabase.auth.signInWithPassword({ email, password });
+        result = await sb.auth.signInWithPassword({ email, password });
       }
 
       const { data, error } = result;

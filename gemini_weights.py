@@ -1,4 +1,4 @@
-import google.generativeai as genai
+from google import genai
 import json
 import os
 
@@ -9,8 +9,7 @@ def get_weights(city_name: str) -> dict:
     Returns dict with keys: air_quality, light_pollution, heat_island, energy_use, reasoning.
     Weights sum to 1.0.
     """
-    genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
     prompt = f"""
     You are an environmental data scientist building a city pollution scoring model.
@@ -28,6 +27,6 @@ def get_weights(city_name: str) -> dict:
     }}
     """
 
-    response = model.generate_content(prompt)
+    response = client.models.generate_content(model="gemma-4-31b-it", contents=prompt)
     text = response.text.strip().replace("```json", "").replace("```", "").strip()
     return json.loads(text)

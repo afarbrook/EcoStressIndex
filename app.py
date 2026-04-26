@@ -1,4 +1,4 @@
-from flask import Flask, render_template, request, jsonify, redirect
+from flask import Flask, render_template, request, jsonify
 from functools import wraps
 from supabase import create_client
 from dotenv import load_dotenv
@@ -7,7 +7,7 @@ import os
 from esi import compute_esi, compute_price, normalize
 from gemini_weights import get_weights
 from gemini_explain import get_explanation
-from geo import get_neighborhoods_geojson, get_city_bbox
+from geo import get_city_tracts, get_city_bbox, tract_components
 from mock.mock_data import get_mock_for_city
 from data_sources.air_quality import get_air_quality
 from data_sources.light_pollution import get_light_pollution
@@ -19,6 +19,9 @@ load_dotenv()
 app = Flask(__name__)
 
 supabase_client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+
+# In-process caches — persist for server lifetime, reset on restart
+_weights_cache: dict = {}
 
 
 def require_auth(f):
@@ -36,7 +39,11 @@ def require_auth(f):
 
 @app.route("/")
 def login():
-    return render_template("login.html")
+    return render_template(
+        "login.html",
+        supabase_url=os.getenv("SUPABASE_URL", ""),
+        supabase_key=os.getenv("SUPABASE_ANON_KEY", ""),
+    )
 
 
 @app.route("/map")
@@ -48,52 +55,16 @@ def map_page():
 @require_auth
 def api_city():
     city = request.args.get("name", "Tucson, AZ")
+    weights, gemini_reasoning = _get_weights(city)
+    neighborhoods, city_center = _build_neighborhoods(city, weights)
 
-    # Try to get Gemini weights; fall back to defaults
-    try:
-        weights_data = get_weights(city)
-        weights = {k: v for k, v in weights_data.items() if k != "reasoning"}
-        gemini_reasoning = weights_data.get("reasoning", "")
-    except Exception:
-        weights = {"air_quality": 0.25, "light_pollution": 0.25, "heat_island": 0.25, "energy_use": 0.25}
-        gemini_reasoning = "Default equal weights applied (Gemini unavailable)."
-
-    # Try Supabase cache first
-    try:
-        cached = supabase_client.table("esi_cache").select("*").eq("city", city).execute()
-        if cached.data:
-            neighborhoods = []
-            for row in cached.data:
-                neighborhoods.append({
-                    "id": row["neighborhood"].lower().replace(" ", "-"),
-                    "name": row["neighborhood"],
-                    "geojson": None,
-                    "esi_score": row["esi_score"],
-                    "dynamic_price_per_kwh": row["dynamic_price"],
-                    "components": row["component_scores"],
-                })
-            return jsonify({"city": city, "weights": weights, "gemini_reasoning": gemini_reasoning, "neighborhoods": neighborhoods})
-    except Exception:
-        pass
-
-    # Fetch real data / fall back to mock
-    neighborhoods = _build_neighborhoods(city, weights)
-
-    # Cache to Supabase
-    try:
-        for n in neighborhoods:
-            supabase_client.table("esi_cache").upsert({
-                "city": city,
-                "neighborhood": n["name"],
-                "esi_score": n["esi_score"],
-                "component_scores": n["components"],
-                "weights": weights,
-                "dynamic_price": n["dynamic_price_per_kwh"],
-            }).execute()
-    except Exception:
-        pass
-
-    return jsonify({"city": city, "weights": weights, "gemini_reasoning": gemini_reasoning, "neighborhoods": neighborhoods})
+    return jsonify({
+        "city": city,
+        "city_center": city_center,
+        "weights": weights,
+        "gemini_reasoning": gemini_reasoning,
+        "neighborhoods": neighborhoods,
+    })
 
 
 @app.route("/api/weights")
@@ -101,8 +72,7 @@ def api_city():
 def api_weights():
     city = request.args.get("city", "Tucson, AZ")
     try:
-        data = get_weights(city)
-        return jsonify(data)
+        return jsonify(get_weights(city))
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
@@ -112,37 +82,21 @@ def api_weights():
 def api_neighborhood():
     city = request.args.get("city", "Tucson, AZ")
     neighborhood = request.args.get("n", "")
-    try:
-        weights_data = get_weights(city)
-        weights = {k: v for k, v in weights_data.items() if k != "reasoning"}
-    except Exception:
-        weights = {"air_quality": 0.25, "light_pollution": 0.25, "heat_island": 0.25, "energy_use": 0.25}
+    weights, _ = _get_weights(city)
 
-    neighborhoods = _build_neighborhoods(city, weights)
+    neighborhoods, _ = _build_neighborhoods(city, weights)
     match = next((n for n in neighborhoods if n["name"].lower() == neighborhood.lower()), None)
     if not match:
         return jsonify({"error": "Neighborhood not found"}), 404
 
     try:
-        match["gemini_explanation"] = get_explanation(city, match["name"], match["esi_score"], match["components"])
+        match["gemini_explanation"] = get_explanation(
+            city, match["name"], match["esi_score"], match["components"]
+        )
     except Exception:
         match["gemini_explanation"] = ""
 
     return jsonify(match)
-
-
-@app.route("/api/simulate")
-@require_auth
-def api_simulate():
-    city = request.args.get("city", "Tucson, AZ")
-    neighborhood = request.args.get("neighborhood", "")
-
-    try:
-        from simulation.simulate import run_simulation
-        result = run_simulation(city, neighborhood)
-        return jsonify(result)
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 
 @app.route("/api/search-log", methods=["POST"])
@@ -164,68 +118,90 @@ def api_search_log():
 # Internal helpers
 # ---------------------------------------------------------------------------
 
-def _build_neighborhoods(city: str, weights: dict) -> list:
-    """Build neighborhood list from real APIs with mock fallback."""
-    mock_list = get_mock_for_city(city)
+def _get_weights(city: str) -> tuple[dict, str]:
+    if city not in _weights_cache:
+        try:
+            data = get_weights(city)
+            weights = {k: v for k, v in data.items() if k != "reasoning"}
+            reasoning = data.get("reasoning", "")
+        except Exception:
+            weights = {"air_quality": 0.25, "light_pollution": 0.25,
+                       "heat_island": 0.25, "energy_use": 0.25}
+            reasoning = "Default equal weights applied (Gemini unavailable)."
+        _weights_cache[city] = (weights, reasoning)
+    return _weights_cache[city]
 
-    try:
-        geo_data = get_neighborhoods_geojson(city)
-    except Exception:
-        geo_data = None
+
+def _build_neighborhoods(city: str, weights: dict) -> tuple[list, dict | None]:
+    """
+    Build neighborhood list from Census tract boundaries.
+    Falls back to mock + city center if TIGER is unavailable.
+    """
+    features, city_center = get_city_tracts(city)
+
+    # Fallback: mock neighborhood names with no polygons
+    if len(features) < 3:
+        mock_list = get_mock_for_city(city)
+        features = [{"name": m["name"], "geojson": None,
+                     "lat": city_center["lat"] if city_center else 0,
+                     "lon": city_center["lon"] if city_center else 0}
+                    for m in mock_list] if city_center else []
+
+    if not city_center:
+        try:
+            info = get_city_bbox(city)
+            city_center = {"lat": info["lat"], "lon": info["lon"]} if info else None
+        except Exception:
+            city_center = None
+
+    city_lat = city_center["lat"] if city_center else 0
+    city_lon = city_center["lon"] if city_center else 0
+
+    # City-level real data to calibrate absolute scale
+    city_aq = city_lp = city_hi = city_eu = None
+    try: city_aq = normalize(get_air_quality(city), 0, 200)
+    except Exception: pass
+    try: city_lp = normalize(get_light_pollution(city), 0, 100)
+    except Exception: pass
+    try: city_hi = normalize(get_heat_island(city), 0, 10)
+    except Exception: pass
+    try: city_eu = normalize(get_energy_use(city), 0, 4000)
+    except Exception: pass
+
+    def blend(geo_val: float, real_val, weight: float = 0.35) -> float:
+        if real_val is None:
+            return geo_val
+        return round(geo_val * (1 - weight) + real_val * weight, 3)
 
     results = []
-    for item in mock_list:
-        name = item["name"]
-
-        # Try real data sources, fall back to mock values
-        try:
-            aq_raw = get_air_quality(city)
-        except Exception:
-            aq_raw = item["aq"] * 100  # denormalize mock
-
-        try:
-            lp_raw = get_light_pollution(city)
-        except Exception:
-            lp_raw = item["lp"] * 50
-
-        try:
-            hi_raw = get_heat_island(city)
-        except Exception:
-            hi_raw = item["hi"] * 5
-
-        try:
-            eu_raw = get_energy_use(city)
-        except Exception:
-            eu_raw = item["eu"] * 2000
+    for feat in features:
+        geo = tract_components(feat["lat"], feat["lon"], city_lat, city_lon)
 
         components = {
-            "air_quality_normalized": normalize(aq_raw, 0, 200),
-            "light_pollution_normalized": normalize(lp_raw, 0, 100),
-            "heat_island_normalized": normalize(hi_raw, 0, 10),
-            "energy_use_normalized": normalize(eu_raw, 0, 4000),
+            "air_quality_normalized":     blend(geo["air_quality"], city_aq),
+            "light_pollution_normalized": blend(geo["light_pollution"], city_lp),
+            "heat_island_normalized":     blend(geo["heat_island"], city_hi),
+            "energy_use_normalized":      blend(geo["energy_use"], city_eu),
         }
 
         esi = compute_esi(components, weights)
         price = compute_price(esi)
 
-        # Extract display-friendly component scores
-        display_components = {
-            "air_quality": round(components["air_quality_normalized"], 2),
-            "light_pollution": round(components["light_pollution_normalized"], 2),
-            "heat_island": round(components["heat_island_normalized"], 2),
-            "energy_use": round(components["energy_use_normalized"], 2),
-        }
-
         results.append({
-            "id": name.lower().replace(" ", "-"),
-            "name": name,
-            "geojson": None,
+            "id": feat["name"].lower().replace(" ", "-"),
+            "name": feat["name"],
+            "geojson": feat["geojson"],
             "esi_score": round(esi, 2),
             "dynamic_price_per_kwh": price,
-            "components": display_components,
+            "components": {
+                "air_quality":     round(components["air_quality_normalized"], 2),
+                "light_pollution": round(components["light_pollution_normalized"], 2),
+                "heat_island":     round(components["heat_island_normalized"], 2),
+                "energy_use":      round(components["energy_use_normalized"], 2),
+            },
         })
 
-    return results
+    return results, city_center
 
 
 if __name__ == "__main__":
