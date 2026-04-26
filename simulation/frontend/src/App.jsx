@@ -1,40 +1,24 @@
-import Navbar from './components/organisms/Navbar'
-import Sidebar from './components/organisms/Sidebar'
-import NeighborhoodPanel from './components/organisms/NeighborhoodPanel'
-import MapContainer from './components/organisms/MapContainer'
-import LoginCard from './components/organisms/LoginCard'
-import { mockNeighborhood, mockWeights, mockSimulation } from './utils/mockData'
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import ProtectedRoute from './pages/ProtectedRoute';
+import LandingPage from './pages/LandingPage';
+import AboutPage from './pages/AboutPage';
+import LoginPage from './pages/LoginPage';
+import MapPage from './pages/MapPage';
 
-function App() {
+export default function App() {
   return (
-    <div className="flex flex-col h-screen">
-      <Navbar city="Tucson, AZ" user={{ email: 'demo@esi.com' }} onLogout={() => {}} />
-      <div className="flex flex-1 overflow-hidden">
-        <div className="w-56 border-r border-gray-200">
-          <Sidebar
-            weights={mockWeights}
-            onSearch={(q) => console.log(q)}
-            isLoading={false}
-            onLogout={() => {}}
-          />
-        </div>
-        <div className="flex-1">
-          <MapContainer
-            neighborhoods={[]}
-            center={[32.22, -110.97]}
-            onNeighborhoodClick={(n) => console.log(n)}
-          />
-        </div>
-        <div className="w-72 border-l border-gray-200">
-          <NeighborhoodPanel
-            neighborhood={mockNeighborhood}
-            simulation={mockSimulation}
-            isLoading={false}
-          />
-        </div>
-      </div>
-    </div>
-  )
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<LandingPage />} />
+        <Route path="/login" element={<LoginPage />} />
+        <Route path="/about" element={<AboutPage />} />
+        <Route path="/map" element={
+          <ProtectedRoute>
+            <MapPage />
+          </ProtectedRoute>
+        } />
+        <Route path="*" element={<Navigate to="/" replace />} />
+      </Routes>
+    </BrowserRouter>
+  );
 }
-
-export default App
