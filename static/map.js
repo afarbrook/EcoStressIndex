@@ -333,22 +333,27 @@ function displaySimulation(sim) {
 
 // ── Impact map layer ─────────────────────────────────────────────────────────
 
-function reductionToColor(pct) {
-  // gray-blue (0% reduction) → sky blue (35%+ reduction)
-  const t = Math.min(1, pct / 35);
-  const r = Math.round(136 - 80 * t);
-  const g = Math.round(136 + 53 * t);
-  const b = Math.round(136 + 112 * t);
-  return `rgb(${r}, ${g}, ${b})`;
-}
-
 function recolorLayers() {
+  if (currentMapMode === 'esi') {
+    Object.entries(layerByName).forEach(([name, layer]) => {
+      const n = neighborhoodDataByName[name];
+      if (!n) return;
+      if (layer.setStyle) layer.setStyle({ fillColor: esiToColor(n.esi_score), fillOpacity: 0.6, color: "#333", weight: 1 });
+    });
+    return;
+  }
+
+  // Impact mode: normalize reductions to the actual min-max range so colors
+  // spread across the full red→green scale regardless of absolute values.
+  const reductions = Object.values(simData).map(s => s.reduction_pct).filter(x => x != null);
+  const minR = reductions.length ? Math.min(...reductions) : 0;
+  const maxR = reductions.length ? Math.max(...reductions) : 15;
+  const range = Math.max(0.01, maxR - minR);
+
   Object.entries(layerByName).forEach(([name, layer]) => {
-    const n = neighborhoodDataByName[name];
-    if (!n) return;
-    const color = currentMapMode === 'esi'
-      ? esiToColor(n.esi_score)
-      : reductionToColor((simData[name]?.reduction_pct) ?? 0);
+    const pct = simData[name]?.reduction_pct ?? minR;
+    const t = (pct - minR) / range; // 0 = least improvement, 1 = most
+    const color = esiToColor(1 - t); // reuse same scale: high reduction → green
     if (layer.setStyle) layer.setStyle({ fillColor: color, fillOpacity: 0.7, color: "#333", weight: 1 });
   });
 }
