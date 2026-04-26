@@ -3,7 +3,6 @@ let neighborhoodLayers = [];
 let currentNeighborhood = null;
 let selectedLayer = null;
 const explanationCache = {};
-let prefetchController = null;
 
 const token = localStorage.getItem("esi_token");
 if (!token) window.location.href = "/";
@@ -43,7 +42,6 @@ function esiToColor(score) {
 }
 
 async function searchCity(query) {
-  if (prefetchController) { prefetchController.abort(); prefetchController = null; }
   showLoading(true);
   clearLayers();
   document.getElementById("side-panel").classList.add("hidden");
@@ -69,7 +67,6 @@ async function searchCity(query) {
     renderNeighborhoods(data.neighborhoods);
     showWeightsPanel(data.weights, data.gemini_reasoning, data.city);
     logSearch(query, data.city);
-    prefetchExplanations(data.neighborhoods, query);
   } catch (err) {
     console.error("City search failed:", err);
     alert("Failed to load city data. Please try again.");
@@ -204,30 +201,6 @@ function setComponentBar(id, value) {
   val.textContent = value.toFixed(2);
 }
 
-async function prefetchExplanations(neighborhoods, cityQuery) {
-  if (prefetchController) prefetchController.abort();
-  prefetchController = new AbortController();
-  const { signal } = prefetchController;
-
-  // Only prefetch the first 3 — the rest load on demand when clicked.
-  // Prefetching every neighborhood saturates Gunicorn worker threads and
-  // makes the site unresponsive in other tabs.
-  const targets = neighborhoods.slice(0, 3);
-
-  for (const n of targets) {
-    if (signal.aborted) break;
-    const cacheKey = `${cityQuery}|${n.name}`;
-    if (explanationCache[cacheKey]) continue;
-    fetch(
-      `/api/neighborhood?city=${encodeURIComponent(cityQuery)}&n=${encodeURIComponent(n.name)}&base_rate=${getBaseRate()}`,
-      { headers: { Authorization: `Bearer ${getToken()}` }, signal }
-    )
-      .then(r => r.json())
-      .then(data => { if (data.gemini_explanation) explanationCache[cacheKey] = data.gemini_explanation; })
-      .catch(() => {});
-    await new Promise(r => setTimeout(r, 1500));
-  }
-}
 
 async function loadNeighborhoodDetail(neighborhood) {
   const cityQuery = document.getElementById("city-search").value || "Tucson, AZ";
