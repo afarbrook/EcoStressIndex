@@ -25,10 +25,17 @@ _weights_cache: dict = {}
 _neighborhoods_cache: dict = {}   # keyed by city only — no base_rate
 _explanation_cache: dict = {}
 
-# Locks prevent duplicate Gemini/TIGER calls when two requests race on a cold city.
-_weights_lock = threading.Lock()
-_neighborhoods_lock = threading.Lock()
-_explanation_lock = threading.Lock()
+# Per-key locks prevent duplicate work when two requests race on the same cold key,
+# without blocking requests for different keys (cities/neighborhoods).
+_key_locks: dict[str, threading.Lock] = {}
+_key_locks_meta = threading.Lock()  # protects the _key_locks dict itself
+
+
+def _get_lock(key: str) -> threading.Lock:
+    with _key_locks_meta:
+        if key not in _key_locks:
+            _key_locks[key] = threading.Lock()
+        return _key_locks[key]
 
 _CACHE_MAX = 50  # evict oldest city if cache grows beyond this
 
@@ -118,7 +125,7 @@ def api_neighborhood():
 
     cache_key = f"{city}|{neighborhood.lower()}"
     if cache_key not in _explanation_cache:
-        with _explanation_lock:
+        with _get_lock(f"explain:{cache_key}"):
             if cache_key not in _explanation_cache:
                 try:
                     _explanation_cache[cache_key] = get_explanation(
@@ -162,7 +169,7 @@ def _get_weights(city: str) -> tuple[dict, str]:
     """Return (weights_dict, reasoning) for a city, cached in-process after first call."""
     if city in _weights_cache:
         return _weights_cache[city]
-    with _weights_lock:
+    with _get_lock(f"weights:{city}"):
         if city not in _weights_cache:  # re-check after acquiring lock
             try:
                 data = get_weights(city)
@@ -185,7 +192,7 @@ def _get_neighborhoods(city: str, weights: dict, base_rate: float = 0.12) -> tup
     cache entries and leak memory.
     """
     if city not in _neighborhoods_cache:
-        with _neighborhoods_lock:
+        with _get_lock(f"neighborhoods:{city}"):
             if city not in _neighborhoods_cache:
                 _evict_if_full(_neighborhoods_cache)
                 _neighborhoods_cache[city] = _build_neighborhoods(city, weights)
