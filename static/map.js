@@ -343,18 +343,16 @@ function recolorLayers() {
     return;
   }
 
-  // Impact mode: normalize reductions to the actual min-max range so colors
-  // spread across the full red→green scale regardless of absolute values.
-  const reductions = Object.values(simData).map(s => s.reduction_pct).filter(x => x != null);
-  const minR = reductions.length ? Math.min(...reductions) : 0;
-  const maxR = reductions.length ? Math.max(...reductions) : 15;
-  const range = Math.max(0.01, maxR - minR);
-
+  // Impact mode: color shows the after-pricing ESI.
+  // Each neighborhood's ESI is reduced proportionally to its energy reduction,
+  // so deep red areas shift toward orange/dim-green and already-green areas
+  // look nearly the same as before.
   Object.entries(layerByName).forEach(([name, layer]) => {
-    const pct = simData[name]?.reduction_pct ?? minR;
-    const t = (pct - minR) / range; // 0 = least improvement, 1 = most
-    const color = esiToColor(1 - t); // reuse same scale: high reduction → green
-    if (layer.setStyle) layer.setStyle({ fillColor: color, fillOpacity: 0.7, color: "#333", weight: 1 });
+    const n = neighborhoodDataByName[name];
+    const sim = simData[name];
+    if (!n || !layer.setStyle) return;
+    const afterEsi = sim ? n.esi_score * (1 - sim.reduction_pct / 100) : n.esi_score;
+    layer.setStyle({ fillColor: esiToColor(afterEsi), fillOpacity: 0.7, color: "#333", weight: 1 });
   });
 }
 
