@@ -49,5 +49,6 @@ MOCK_NEIGHBORHOODS = {
 
 
 def get_mock_for_city(city_name: str) -> list:
+    """Return mock neighborhood data for a city, falling back to Tucson if unknown."""
     key = city_name.lower().split(",")[0].strip()
     return MOCK_NEIGHBORHOODS.get(key, MOCK_NEIGHBORHOODS["tucson"])

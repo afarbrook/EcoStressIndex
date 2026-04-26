@@ -133,6 +133,30 @@ body {
   font-size: 0.9rem;
 }
 .search-wrap button:hover { background: #22c55e; }
+
+.rate-wrap {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 0.85rem;
+  color: #7a8a9a;
+  white-space: nowrap;
+}
+.rate-wrap label { color: #7a8a9a; }
+.rate-prefix, .rate-suffix { color: #a0a0a0; }
+.rate-wrap input {
+  width: 62px;
+  padding: 6px 8px;
+  background: #0f1117;
+  border: 1px solid #2e3a4a;
+  border-radius: 6px;
+  color: #e0e0e0;
+  font-size: 0.85rem;
+  outline: none;
+  text-align: center;
+}
+.rate-wrap input:focus { border-color: #4ade80; }
+
 #logout-btn { background: #2e3a4a; color: #e0e0e0; margin-left: auto; }
 #logout-btn:hover { background: #3e4a5a; }
 
@@ -247,5 +271,14 @@ body {
   margin-bottom: 12px;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+@keyframes neighborhood-pulse {
+  0%   { opacity: 0.5; }
+  50%  { opacity: 1.0; }
+  100% { opacity: 0.5; }
+}
+.neighborhood-selected {
+  animation: neighborhood-pulse 1.4s ease-in-out infinite;
+}
 
 .hidden { display: none !important; }

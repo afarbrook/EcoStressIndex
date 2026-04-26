@@ -1,5 +1,6 @@
 from flask import Flask, render_template, request, jsonify
 from functools import wraps
+from concurrent.futures import ThreadPoolExecutor
 from supabase import create_client
 from dotenv import load_dotenv
 import os
@@ -8,11 +9,8 @@ from esi import compute_esi, compute_price, normalize
 from gemini_weights import get_weights
 from gemini_explain import get_explanation
 from geo import get_city_tracts, get_city_bbox, tract_components
-from mock.mock_data import get_mock_for_city
-from data_sources.air_quality import get_air_quality
-from data_sources.light_pollution import get_light_pollution
-from data_sources.heat_island import get_heat_island
-from data_sources.energy_use import get_energy_use
+from mock_data import get_mock_for_city
+from data_sources import get_air_quality, get_light_pollution, get_heat_island, get_energy_use
 
 load_dotenv()
 
@@ -22,9 +20,12 @@ supabase_client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_K
 
 # In-process caches — persist for server lifetime, reset on restart
 _weights_cache: dict = {}
+_neighborhoods_cache: dict = {}
+_explanation_cache: dict = {}
 
 
 def require_auth(f):
+    """Flask decorator that validates a Supabase JWT from the Authorization header."""
     @wraps(f)
     def decorated(*args, **kwargs):
         token = request.headers.get("Authorization", "").replace("Bearer ", "")
@@ -54,9 +55,20 @@ def map_page():
 @app.route("/api/city")
 @require_auth
 def api_city():
+    """Return all neighborhoods with ESI scores, prices, and Gemini weights for a city."""
     city = request.args.get("name", "Tucson, AZ")
-    weights, gemini_reasoning = _get_weights(city)
-    neighborhoods, city_center = _build_neighborhoods(city, weights)
+    try:
+        base_rate = max(0.01, min(5.0, float(request.args.get("base_rate", 0.12))))
+    except ValueError:
+        base_rate = 0.12
+
+    # Gemini weights and Census TIGER tracts are independent — fetch in parallel
+    with ThreadPoolExecutor(max_workers=2) as ex:
+        weights_f = ex.submit(_get_weights, city)
+        ex.submit(get_city_tracts, city)   # warms _tiger_cache for _get_neighborhoods
+    weights, gemini_reasoning = weights_f.result()
+
+    neighborhoods, city_center = _get_neighborhoods(city, weights, base_rate)
 
     return jsonify({
         "city": city,
@@ -70,6 +82,7 @@ def api_city():
 @app.route("/api/weights")
 @require_auth
 def api_weights():
+    """Return Gemini-generated ESI weights and reasoning for a city."""
     city = request.args.get("city", "Tucson, AZ")
     try:
         return jsonify(get_weights(city))
@@ -80,28 +93,38 @@ def api_weights():
 @app.route("/api/neighborhood")
 @require_auth
 def api_neighborhood():
+    """Return ESI detail and Gemini explanation for a single neighborhood."""
     city = request.args.get("city", "Tucson, AZ")
     neighborhood = request.args.get("n", "")
+    try:
+        base_rate = max(0.01, min(5.0, float(request.args.get("base_rate", 0.12))))
+    except ValueError:
+        base_rate = 0.12
     weights, _ = _get_weights(city)
 
-    neighborhoods, _ = _build_neighborhoods(city, weights)
+    neighborhoods, _ = _get_neighborhoods(city, weights, base_rate)
     match = next((n for n in neighborhoods if n["name"].lower() == neighborhood.lower()), None)
     if not match:
         return jsonify({"error": "Neighborhood not found"}), 404
 
-    try:
-        match["gemini_explanation"] = get_explanation(
-            city, match["name"], match["esi_score"], match["components"]
-        )
-    except Exception:
-        match["gemini_explanation"] = ""
+    cache_key = f"{city}|{neighborhood.lower()}"
+    if cache_key not in _explanation_cache:
+        try:
+            _explanation_cache[cache_key] = get_explanation(
+                city, match["name"], match["esi_score"], match["components"]
+            )
+        except Exception:
+            _explanation_cache[cache_key] = ""
 
-    return jsonify(match)
+    result = dict(match)
+    result["gemini_explanation"] = _explanation_cache[cache_key]
+    return jsonify(result)
 
 
 @app.route("/api/search-log", methods=["POST"])
 @require_auth
 def api_search_log():
+    """Log a city search query to Supabase for analytics."""
     body = request.get_json(silent=True) or {}
     try:
         supabase_client.table("search_log").insert({
@@ -119,6 +142,7 @@ def api_search_log():
 # ---------------------------------------------------------------------------
 
 def _get_weights(city: str) -> tuple[dict, str]:
+    """Return (weights_dict, reasoning) for a city, cached in-process after first call."""
     if city not in _weights_cache:
         try:
             data = get_weights(city)
@@ -132,11 +156,16 @@ def _get_weights(city: str) -> tuple[dict, str]:
     return _weights_cache[city]
 
 
-def _build_neighborhoods(city: str, weights: dict) -> tuple[list, dict | None]:
-    """
-    Build neighborhood list from Census tract boundaries.
-    Falls back to mock + city center if TIGER is unavailable.
-    """
+def _get_neighborhoods(city: str, weights: dict, base_rate: float = 0.12) -> tuple[list, dict | None]:
+    """Return (neighborhoods, city_center), cached per city+rate combination."""
+    cache_key = f"{city}|{base_rate}"
+    if cache_key not in _neighborhoods_cache:
+        _neighborhoods_cache[cache_key] = _build_neighborhoods(city, weights, base_rate)
+    return _neighborhoods_cache[cache_key]
+
+
+def _build_neighborhoods(city: str, weights: dict, base_rate: float = 0.12) -> tuple[list, dict | None]:
+    """Build scored neighborhood list from Census tracts, blending real API data where available. Falls back to mock data if TIGER is unavailable."""
     features, city_center = get_city_tracts(city)
 
     # Fallback: mock neighborhood names with no polygons
@@ -157,15 +186,21 @@ def _build_neighborhoods(city: str, weights: dict) -> tuple[list, dict | None]:
     city_lat = city_center["lat"] if city_center else 0
     city_lon = city_center["lon"] if city_center else 0
 
-    # City-level real data to calibrate absolute scale
+    # Fetch all 4 data sources in parallel — wait for the slowest, not the sum
+    with ThreadPoolExecutor(max_workers=4) as ex:
+        aq_f = ex.submit(get_air_quality, city)
+        lp_f = ex.submit(get_light_pollution, city)
+        hi_f = ex.submit(get_heat_island, city)
+        eu_f = ex.submit(get_energy_use, city)
+
     city_aq = city_lp = city_hi = city_eu = None
-    try: city_aq = normalize(get_air_quality(city), 0, 200)
+    try: city_aq = normalize(aq_f.result(), 0, 200)
     except Exception: pass
-    try: city_lp = normalize(get_light_pollution(city), 0, 100)
+    try: city_lp = normalize(lp_f.result(), 0, 100)
     except Exception: pass
-    try: city_hi = normalize(get_heat_island(city), 0, 10)
+    try: city_hi = normalize(hi_f.result(), 0, 10)
     except Exception: pass
-    try: city_eu = normalize(get_energy_use(city), 0, 4000)
+    try: city_eu = normalize(eu_f.result(), 0, 4000)
     except Exception: pass
 
     def blend(geo_val: float, real_val, weight: float = 0.35) -> float:
@@ -185,7 +220,7 @@ def _build_neighborhoods(city: str, weights: dict) -> tuple[list, dict | None]:
         }
 
         esi = compute_esi(components, weights)
-        price = compute_price(esi)
+        price = compute_price(esi, base_rate=base_rate)
 
         results.append({
             "id": feat["name"].lower().replace(" ", "-"),

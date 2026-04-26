@@ -1,12 +1,18 @@
 let map;
 let neighborhoodLayers = [];
 let currentNeighborhood = null;
+let selectedLayer = null;
+const explanationCache = {};
 
 const token = localStorage.getItem("esi_token");
 if (!token) window.location.href = "/";
 
 function getToken() {
   return localStorage.getItem("esi_token");
+}
+
+function getBaseRate() {
+  return parseFloat(document.getElementById("base-rate").value) || 0.12;
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -41,7 +47,7 @@ async function searchCity(query) {
   document.getElementById("side-panel").classList.add("hidden");
 
   try {
-    const res = await fetch(`/api/city?name=${encodeURIComponent(query)}`, {
+    const res = await fetch(`/api/city?name=${encodeURIComponent(query)}&base_rate=${getBaseRate()}`, {
       headers: { Authorization: `Bearer ${getToken()}` },
     });
 
@@ -69,19 +75,20 @@ async function searchCity(query) {
   }
 }
 
+function neighborhoodStyle(esiScore) {
+  return { fillColor: esiToColor(esiScore), fillOpacity: 0.6, color: "#333", weight: 1 };
+}
+
 function renderNeighborhoods(neighborhoods) {
   neighborhoods.forEach((n) => {
     if (n.geojson) {
-      const layer = L.geoJSON(n.geojson, {
-        style: {
-          fillColor: esiToColor(n.esi_score),
-          fillOpacity: 0.6,
-          color: "#333",
-          weight: 1,
-        },
-      })
+      const layer = L.geoJSON(n.geojson, { style: neighborhoodStyle(n.esi_score) })
         .bindTooltip(`<b>${n.name}</b><br>ESI: ${n.esi_score.toFixed(2)}`)
-        .on("click", () => openSidePanel(n))
+        .on("click", (e) => {
+          L.DomEvent.stopPropagation(e);
+          selectLayer(layer);
+          openSidePanel(n);
+        })
         .addTo(map);
       neighborhoodLayers.push(layer);
     } else {
@@ -93,7 +100,11 @@ function renderNeighborhoods(neighborhoods) {
         weight: 1.5,
       })
         .bindTooltip(`<b>${n.name}</b><br>ESI: ${n.esi_score.toFixed(2)}`)
-        .on("click", () => openSidePanel(n))
+        .on("click", (e) => {
+          L.DomEvent.stopPropagation(e);
+          selectLayer(marker);
+          openSidePanel(n);
+        })
         .addTo(map);
       neighborhoodLayers.push(marker);
     }
@@ -126,12 +137,34 @@ function getNeighborhoodLatLng(name) {
   return TUCSON_COORDS[name] || [32.2226, -110.9747];
 }
 
+function getLayerElements(layer) {
+  const els = [];
+  if (layer.eachLayer) {
+    layer.eachLayer(l => { if (l.getElement) els.push(l.getElement()); });
+  } else if (layer.getElement) {
+    els.push(layer.getElement());
+  }
+  return els.filter(Boolean);
+}
+
+function selectLayer(layer) {
+  if (selectedLayer) {
+    if (selectedLayer.setStyle) selectedLayer.setStyle({ color: "#333", weight: 1, fillOpacity: 0.6 });
+    getLayerElements(selectedLayer).forEach(el => el.classList.remove("neighborhood-selected"));
+  }
+  selectedLayer = layer;
+  if (layer.setStyle) layer.setStyle({ color: "#fff", weight: 3, fillOpacity: 0.75 });
+  getLayerElements(layer).forEach(el => el.classList.add("neighborhood-selected"));
+}
+
 function clearLayers() {
   neighborhoodLayers.forEach((l) => map.removeLayer(l));
   neighborhoodLayers = [];
+  selectedLayer = null;
 }
 
 function openSidePanel(neighborhood) {
+  if (currentNeighborhood && currentNeighborhood.id === neighborhood.id) return;
   currentNeighborhood = neighborhood;
   const panel = document.getElementById("side-panel");
 
@@ -149,7 +182,10 @@ function openSidePanel(neighborhood) {
   setComponentBar("hi", neighborhood.components.heat_island);
   setComponentBar("eu", neighborhood.components.energy_use);
 
-  document.getElementById("panel-explanation").textContent = "Loading...";
+  const cityQuery = document.getElementById("city-search").value || "Tucson, AZ";
+  const cacheKey = `${cityQuery}|${neighborhood.name}`;
+  document.getElementById("panel-explanation").textContent =
+    explanationCache[cacheKey] || "Loading...";
 
   panel.classList.remove("hidden");
 
@@ -166,15 +202,22 @@ function setComponentBar(id, value) {
 
 async function loadNeighborhoodDetail(neighborhood) {
   const cityQuery = document.getElementById("city-search").value || "Tucson, AZ";
+  const cacheKey = `${cityQuery}|${neighborhood.name}`;
+
+  if (explanationCache[cacheKey]) {
+    document.getElementById("panel-explanation").textContent = explanationCache[cacheKey];
+    return;
+  }
 
   try {
     const res = await fetch(
-      `/api/neighborhood?city=${encodeURIComponent(cityQuery)}&n=${encodeURIComponent(neighborhood.name)}`,
+      `/api/neighborhood?city=${encodeURIComponent(cityQuery)}&n=${encodeURIComponent(neighborhood.name)}&base_rate=${getBaseRate()}`,
       { headers: { Authorization: `Bearer ${getToken()}` } }
     );
     const data = await res.json();
-    document.getElementById("panel-explanation").textContent =
-      data.gemini_explanation || "No explanation available.";
+    const text = data.gemini_explanation || "No explanation available.";
+    explanationCache[cacheKey] = text;
+    document.getElementById("panel-explanation").textContent = text;
   } catch {
     document.getElementById("panel-explanation").textContent = "Could not load explanation.";
   }

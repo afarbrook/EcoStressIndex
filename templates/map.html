@@ -16,6 +16,12 @@
       <input type="text" id="city-search" placeholder="Search city (e.g. Tucson, AZ)" />
       <button id="search-btn">Search</button>
     </div>
+    <div class="rate-wrap">
+      <label for="base-rate">Base rate</label>
+      <span class="rate-prefix">$</span>
+      <input type="number" id="base-rate" value="0.12" min="0.01" max="5.00" step="0.01" />
+      <span class="rate-suffix">/kWh</span>
+    </div>
     <button id="logout-btn">Sign Out</button>
   </header>
 

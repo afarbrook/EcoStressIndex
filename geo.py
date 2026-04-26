@@ -11,6 +11,7 @@ _tiger_cache: dict = {}
 
 
 def get_city_bbox(city_name: str) -> dict | None:
+    """Return lat, lon, and bounding box for a city via Nominatim. Returns None if not found."""
     params = {"q": city_name, "format": "json", "limit": 1}
     res = requests.get(NOMINATIM_URL, params=params, headers=HEADERS, timeout=10).json()
     if not res:
@@ -24,6 +25,7 @@ def get_city_bbox(city_name: str) -> dict | None:
 
 
 def _get_county_fips(lat: float, lon: float) -> tuple[str, str] | None:
+    """Return (state_fips, county_fips) for a coordinate via Census geocoder. Returns None on failure."""
     try:
         res = requests.get(CENSUS_GEOCODER, params={
             "x": lon, "y": lat,
@@ -41,6 +43,7 @@ def _get_county_fips(lat: float, lon: float) -> tuple[str, str] | None:
 
 
 def _polygon_centroid(coordinates: list) -> tuple[float, float]:
+    """Return (lat, lon) centroid of a GeoJSON polygon's outer ring."""
     ring = coordinates[0]
     lats = [p[1] for p in ring]
     lons = [p[0] for p in ring]
