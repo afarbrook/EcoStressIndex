@@ -67,6 +67,7 @@ async function searchCity(query) {
     renderNeighborhoods(data.neighborhoods);
     showWeightsPanel(data.weights, data.gemini_reasoning, data.city);
     logSearch(query, data.city);
+    prefetchExplanations(data.neighborhoods, query);
   } catch (err) {
     console.error("City search failed:", err);
     alert("Failed to load city data. Please try again.");
@@ -199,6 +200,21 @@ function setComponentBar(id, value) {
   bar.style.width = `${(value * 100).toFixed(0)}%`;
   bar.style.background = esiToColor(value);
   val.textContent = value.toFixed(2);
+}
+
+async function prefetchExplanations(neighborhoods, cityQuery) {
+  for (const n of neighborhoods) {
+    const cacheKey = `${cityQuery}|${n.name}`;
+    if (explanationCache[cacheKey]) continue;
+    fetch(
+      `/api/neighborhood?city=${encodeURIComponent(cityQuery)}&n=${encodeURIComponent(n.name)}&base_rate=${getBaseRate()}`,
+      { headers: { Authorization: `Bearer ${getToken()}` } }
+    )
+      .then(r => r.json())
+      .then(data => { if (data.gemini_explanation) explanationCache[cacheKey] = data.gemini_explanation; })
+      .catch(() => {});
+    await new Promise(r => setTimeout(r, 300));
+  }
 }
 
 async function loadNeighborhoodDetail(neighborhood) {
