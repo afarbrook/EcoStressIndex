@@ -248,20 +248,4 @@ No API key? No problem for a demo. The app fails silently and falls back at ever
 
 ---
 
-## Simulation Module (Person B)
-
-`simulation/simulate.py` is a stub. Person B owns this module and replaces the random number generator with a real price elasticity model.
-
-The frontend expects this shape from `GET /api/simulate`:
-
-```json
-{
-  "neighborhood": "Downtown Tucson",
-  "baseline_kwh": 1250,
-  "projected_kwh": 987,
-  "reduction_pct": 21.0,
-  "price_applied": 0.164,
-  "confidence": 0.82,
-  "gemini_insight": "A 37% price premium is projected to reduce consumption by..."
-}
 ```
