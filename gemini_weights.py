@@ -9,10 +9,7 @@ def get_weights(city_name: str) -> dict:
     Returns dict with keys: air_quality, light_pollution, heat_island, energy_use, reasoning.
     Weights sum to 1.0.
     """
-    client = genai.Client(
-        api_key=os.getenv("GEMINI_API_KEY"),
-        http_options={"timeout": 20},
-    )
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
     prompt = f"""
     You are an environmental data scientist building a city pollution scoring model.

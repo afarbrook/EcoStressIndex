@@ -6,10 +6,7 @@ def get_explanation(city: str, neighborhood: str, esi_score: float, components: 
     """
     Generate a natural-language explanation of why a neighborhood received its ESI score.
     """
-    client = genai.Client(
-        api_key=os.getenv("GEMINI_API_KEY"),
-        http_options={"timeout": 20},
-    )
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
     prompt = f"""
     You are an environmental analyst. Explain in 2-3 sentences why the {neighborhood}
