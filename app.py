@@ -16,7 +16,7 @@ load_dotenv()
 
 app = Flask(__name__)
 
-supabase_client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_KEY"))
+supabase_client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_ANON_KEY"))
 
 # In-process caches — persist for server lifetime, reset on restart
 _weights_cache: dict = {}
@@ -43,7 +43,7 @@ def login():
     return render_template(
         "login.html",
         supabase_url=os.getenv("SUPABASE_URL", ""),
-        supabase_key=os.getenv("SUPABASE_KEY", ""),
+        supabase_key=os.getenv("SUPABASE_ANON_KEY", ""),
     )
 
 
