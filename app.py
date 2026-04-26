@@ -3,6 +3,7 @@ from functools import wraps
 from concurrent.futures import ThreadPoolExecutor
 from supabase import create_client
 from dotenv import load_dotenv
+import threading
 import os
 
 from esi import compute_esi, compute_price, normalize
@@ -18,10 +19,18 @@ app = Flask(__name__)
 
 supabase_client = create_client(os.getenv("SUPABASE_URL"), os.getenv("SUPABASE_ANON_KEY"))
 
-# In-process caches — persist for server lifetime, reset on restart
+# In-process caches — persist for server lifetime, reset on restart.
+# All bounded by the number of distinct cities users actually search.
 _weights_cache: dict = {}
-_neighborhoods_cache: dict = {}
+_neighborhoods_cache: dict = {}   # keyed by city only — no base_rate
 _explanation_cache: dict = {}
+
+# Locks prevent duplicate Gemini/TIGER calls when two requests race on a cold city.
+_weights_lock = threading.Lock()
+_neighborhoods_lock = threading.Lock()
+_explanation_lock = threading.Lock()
+
+_CACHE_MAX = 50  # evict oldest city if cache grows beyond this
 
 
 def require_auth(f):
@@ -109,12 +118,14 @@ def api_neighborhood():
 
     cache_key = f"{city}|{neighborhood.lower()}"
     if cache_key not in _explanation_cache:
-        try:
-            _explanation_cache[cache_key] = get_explanation(
-                city, match["name"], match["esi_score"], match["components"]
-            )
-        except Exception:
-            _explanation_cache[cache_key] = ""
+        with _explanation_lock:
+            if cache_key not in _explanation_cache:
+                try:
+                    _explanation_cache[cache_key] = get_explanation(
+                        city, match["name"], match["esi_score"], match["components"]
+                    )
+                except Exception:
+                    _explanation_cache[cache_key] = ""
 
     result = dict(match)
     result["gemini_explanation"] = _explanation_cache[cache_key]
@@ -141,30 +152,53 @@ def api_search_log():
 # Internal helpers
 # ---------------------------------------------------------------------------
 
+def _evict_if_full(cache: dict) -> None:
+    """Drop the oldest entry when the cache hits its size cap."""
+    if len(cache) >= _CACHE_MAX:
+        cache.pop(next(iter(cache)))
+
+
 def _get_weights(city: str) -> tuple[dict, str]:
     """Return (weights_dict, reasoning) for a city, cached in-process after first call."""
-    if city not in _weights_cache:
-        try:
-            data = get_weights(city)
-            weights = {k: v for k, v in data.items() if k != "reasoning"}
-            reasoning = data.get("reasoning", "")
-        except Exception:
-            weights = {"air_quality": 0.25, "light_pollution": 0.25,
-                       "heat_island": 0.25, "energy_use": 0.25}
-            reasoning = "Default equal weights applied (Gemini unavailable)."
-        _weights_cache[city] = (weights, reasoning)
+    if city in _weights_cache:
+        return _weights_cache[city]
+    with _weights_lock:
+        if city not in _weights_cache:  # re-check after acquiring lock
+            try:
+                data = get_weights(city)
+                weights = {k: v for k, v in data.items() if k != "reasoning"}
+                reasoning = data.get("reasoning", "")
+            except Exception:
+                weights = {"air_quality": 0.25, "light_pollution": 0.25,
+                           "heat_island": 0.25, "energy_use": 0.25}
+                reasoning = "Default equal weights applied (Gemini unavailable)."
+            _evict_if_full(_weights_cache)
+            _weights_cache[city] = (weights, reasoning)
     return _weights_cache[city]
 
 
 def _get_neighborhoods(city: str, weights: dict, base_rate: float = 0.12) -> tuple[list, dict | None]:
-    """Return (neighborhoods, city_center), cached per city+rate combination."""
-    cache_key = f"{city}|{base_rate}"
-    if cache_key not in _neighborhoods_cache:
-        _neighborhoods_cache[cache_key] = _build_neighborhoods(city, weights, base_rate)
-    return _neighborhoods_cache[cache_key]
+    """Return (neighborhoods, city_center) with prices applied for base_rate.
+
+    Neighborhood ESI data is cached by city only. Prices (which depend on
+    base_rate) are computed on the fly so slider changes don't create new
+    cache entries and leak memory.
+    """
+    if city not in _neighborhoods_cache:
+        with _neighborhoods_lock:
+            if city not in _neighborhoods_cache:
+                _evict_if_full(_neighborhoods_cache)
+                _neighborhoods_cache[city] = _build_neighborhoods(city, weights)
+
+    neighborhoods, city_center = _neighborhoods_cache[city]
+    priced = [
+        {**n, "dynamic_price_per_kwh": compute_price(n["esi_score"], base_rate)}
+        for n in neighborhoods
+    ]
+    return priced, city_center
 
 
-def _build_neighborhoods(city: str, weights: dict, base_rate: float = 0.12) -> tuple[list, dict | None]:
+def _build_neighborhoods(city: str, weights: dict) -> tuple[list, dict | None]:
     """Build scored neighborhood list from Census tracts, blending real API data where available. Falls back to mock data if TIGER is unavailable."""
     features, city_center = get_city_tracts(city)
 
@@ -186,19 +220,18 @@ def _build_neighborhoods(city: str, weights: dict, base_rate: float = 0.12) -> t
     city_lat = city_center["lat"] if city_center else 0
     city_lon = city_center["lon"] if city_center else 0
 
-    # Fetch all 4 data sources in parallel — wait for the slowest, not the sum
-    with ThreadPoolExecutor(max_workers=4) as ex:
+    # Only air_quality and energy_use make real network calls — fetch those in parallel.
+    # light_pollution and heat_island are local dict lookups and don't need threads.
+    with ThreadPoolExecutor(max_workers=2) as ex:
         aq_f = ex.submit(get_air_quality, city)
-        lp_f = ex.submit(get_light_pollution, city)
-        hi_f = ex.submit(get_heat_island, city)
         eu_f = ex.submit(get_energy_use, city)
 
     city_aq = city_lp = city_hi = city_eu = None
     try: city_aq = normalize(aq_f.result(), 0, 200)
     except Exception: pass
-    try: city_lp = normalize(lp_f.result(), 0, 100)
+    try: city_lp = normalize(get_light_pollution(city), 0, 100)
     except Exception: pass
-    try: city_hi = normalize(hi_f.result(), 0, 10)
+    try: city_hi = normalize(get_heat_island(city), 0, 10)
     except Exception: pass
     try: city_eu = normalize(eu_f.result(), 0, 4000)
     except Exception: pass
@@ -220,14 +253,12 @@ def _build_neighborhoods(city: str, weights: dict, base_rate: float = 0.12) -> t
         }
 
         esi = compute_esi(components, weights)
-        price = compute_price(esi, base_rate=base_rate)
 
         results.append({
             "id": feat["name"].lower().replace(" ", "-"),
             "name": feat["name"],
             "geojson": feat["geojson"],
             "esi_score": round(esi, 2),
-            "dynamic_price_per_kwh": price,
             "components": {
                 "air_quality":     round(components["air_quality_normalized"], 2),
                 "light_pollution": round(components["light_pollution_normalized"], 2),

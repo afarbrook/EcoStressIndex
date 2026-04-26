@@ -8,6 +8,7 @@ TIGER_URL = "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Tract
 HEADERS = {"User-Agent": "EcoStressIndex/1.0"}
 
 _tiger_cache: dict = {}
+_TIGER_CACHE_MAX = 20  # county tract GeoJSON can be 5-20 MB each; cap total entries
 
 
 def get_city_bbox(city_name: str) -> dict | None:
@@ -50,6 +51,11 @@ def _polygon_centroid(coordinates: list) -> tuple[float, float]:
     return sum(lats) / len(lats), sum(lons) / len(lons)
 
 
+def _evict_tiger_if_full() -> None:
+    if len(_tiger_cache) >= _TIGER_CACHE_MAX:
+        _tiger_cache.pop(next(iter(_tiger_cache)))
+
+
 def get_city_tracts(city_name: str) -> tuple[list, dict | None]:
     """
     Fetch census tract boundaries for a city via Census TIGER API.
@@ -62,6 +68,7 @@ def get_city_tracts(city_name: str) -> tuple[list, dict | None]:
 
     city_info = get_city_bbox(city_name)
     if not city_info:
+        _evict_tiger_if_full()
         _tiger_cache[city_name] = ([], None)
         return [], None
 
@@ -70,6 +77,7 @@ def get_city_tracts(city_name: str) -> tuple[list, dict | None]:
 
     fips = _get_county_fips(city_info["lat"], city_info["lon"])
     if not fips:
+        _evict_tiger_if_full()
         _tiger_cache[city_name] = ([], city_center)
         return [], city_center
 
@@ -112,10 +120,12 @@ def get_city_tracts(city_name: str) -> tuple[list, dict | None]:
                 "lon": clon,
             })
 
+        _evict_tiger_if_full()
         _tiger_cache[city_name] = (features, city_center)
         return features, city_center
 
     except Exception:
+        _evict_tiger_if_full()
         _tiger_cache[city_name] = ([], city_center)
         return [], city_center
 

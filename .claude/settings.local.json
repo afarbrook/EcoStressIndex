@@ -21,7 +21,10 @@
       "WebFetch(domain:statranker.org)",
       "WebFetch(domain:pmc.ncbi.nlm.nih.gov)",
       "WebFetch(domain:www.mdpi.com)",
-      "WebFetch(domain:viirsland.gsfc.nasa.gov)"
+      "WebFetch(domain:viirsland.gsfc.nasa.gov)",
+      "Bash(git add *)",
+      "Bash(git commit *)",
+      "Bash(git push *)"
     ]
   }
 }
